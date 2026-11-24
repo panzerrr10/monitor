@@ -1,0 +1,18 @@
+{
+  "_说明": "示例配置。首次运行时会自动复制为 config/settings.json，并在其中生成随机的会话密钥与登录密码（见控制台输出 / config/初始密码.txt）。这些值都能在页面的「设置」里改，不用改代码。",
+  "server_url": "http://127.0.0.1:8090",
+  "listen_host": "0.0.0.0",
+  "listen_port": 8090,
+  "ingest_token": "monitor-dev-token",
+  "interval_sec": 10,
+  "raw_retention_hours": 24,
+  "agg_retention_days": 7,
+  "agg_step_sec": 300,
+  "offline_after_sec": 60,
+  "eval_interval_sec": 5,
+  "ssh_command_timeout_sec": 30,
+  "ssh_default_user": "root",
+  "ssh_key_path": "~/.ssh/id_monitor",
+  "auth": {},
+  "upload_max_mb": 200
+}

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · Monitor</title>
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         font-family:-apple-system,"Noto Sans CJK SC",sans-serif;
+         background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%); color:#e2e8f0; }
+  .box { width:360px; background:#fff; color:#1f2328; border-radius:14px; padding:30px 28px 26px;
+         box-shadow:0 18px 50px rgba(0,0,0,.35); }
+  h1 { margin:0 0 4px; font-size:19px; color:#14395f; display:flex; align-items:center; gap:8px; }
+  .sub { font-size:12.5px; color:#6b7280; margin-bottom:22px; }
+  label { display:block; font-size:13px; color:#374151; margin-bottom:6px; }
+  input[type=password] { width:100%; padding:10px 12px; border:1px solid #dde3ea; border-radius:8px;
+                         font-size:14px; font-family:inherit; outline:none; transition:.15s; }
+  input[type=password]:focus { border-color:#2c6fbb; box-shadow:0 0 0 3px rgba(44,111,187,.12); }
+  button { width:100%; margin-top:18px; padding:10px; background:#2c6fbb; color:#fff; border:0;
+           border-radius:8px; font-size:14px; font-family:inherit; cursor:pointer; }
+  button:hover { background:#255e9f; }
+  button:disabled { background:#9db4cf; cursor:not-allowed; }
+  #err { margin-top:12px; font-size:13px; color:#b91c1c; min-height:18px; text-align:center; }
+  .tip { margin-top:18px; padding-top:14px; border-top:1px solid #eef1f4;
+         font-size:11.5px; color:#9ca3af; line-height:1.7; }
+  code { background:#f1f3f5; padding:1px 5px; border-radius:4px; font-size:11px; }
+</style>
+</head>
+<body>
+<form class="box" id="f" autocomplete="off">
+  <h1>📊 Monitor</h1>
+  <div class="sub">主机监控与远程运维 · 请先登录</div>
+
+  <label for="pw">登录密码</label>
+  <input type="password" id="pw" name="password" placeholder="请输入密码" autofocus>
+
+  <button type="submit" id="btn">登 录</button>
+  <div id="err"></div>
+
+  <div class="tip">
+    初始密码写在监控服务器上：<br>
+    <code>config/初始密码.txt</code><br>
+    登录后可在「设置」页修改密码。
+  </div>
+</form>
+
+<script>
+const f = document.getElementById('f'), pw = document.getElementById('pw'),
+      btn = document.getElementById('btn'), err = document.getElementById('err');
+f.onsubmit = async e => {
+  e.preventDefault();
+  err.textContent = '';
+  if (!pw.value) { err.textContent = '请输入密码'; return; }
+  btn.disabled = true; btn.textContent = '登录中…';
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw.value }),
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) { location.href = '/'; return; }
+    err.textContent = d.error || '登录失败';
+    pw.select();
+  } catch (ex) {
+    err.textContent = '网络错误：' + ex.message;
+  }
+  btn.disabled = false; btn.textContent = '登 录';
+};
+</script>
+</body>
+</html>

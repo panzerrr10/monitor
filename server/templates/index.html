@@ -1,0 +1,1722 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Monitor · 主机监控告警</title>
+<style>
+  :root { --bg:#f5f7fa; --card:#fff; --line:#e3e8ee; --txt:#1f2328;
+          --muted:#6b7280; --accent:#2c6fbb; --ok:#0f7a3d; --warn:#b45309; --crit:#b91c1c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Noto Sans CJK SC",sans-serif;
+         background:var(--bg); color:var(--txt); font-size:14px; }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:10px 20px;
+           display:flex; align-items:center; gap:14px; position:sticky; top:0; z-index:20; }
+  header h1 { font-size:17px; margin:0; color:#14395f; white-space:nowrap; }
+  .hdr-actions { display:flex; gap:6px; margin-left:10px; }
+  .shutdown-mask { position:fixed; inset:0; background:rgba(15,23,42,.86); color:#e2e8f0;
+                   display:none; align-items:center; justify-content:center; z-index:99;
+                   flex-direction:column; gap:14px; font-size:15px; }
+  .shutdown-mask.show { display:flex; }
+  .shutdown-mask .big { font-size:34px; }
+  .pill { font-size:12px; padding:3px 10px; border-radius:12px; background:#eef1f4; color:var(--muted); }
+  .pill.on { background:#e7f7ed; color:var(--ok); }
+  .pill.off { background:#fdeaea; color:var(--crit); }
+  .tabs { display:flex; gap:4px; margin-left:auto; }
+  .tabs button { border:1px solid var(--line); background:#fff; padding:6px 13px;
+                 border-radius:7px; cursor:pointer; font-size:13px; color:#374151; font-family:inherit; }
+  .tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .wrap { max-width:1280px; margin:0 auto; padding:16px 20px 60px; }
+
+  /* 页面内告警提示 */
+  #alertBar { display:none; margin-bottom:14px; border-radius:10px; overflow:hidden;
+              border:1px solid #f3c0c0; background:#fff7f7; }
+  #alertBar.show { display:block; }
+  #alertBar .head { background:var(--crit); color:#fff; padding:8px 16px; font-weight:600;
+                    font-size:13px; display:flex; align-items:center; gap:10px; }
+  #alertBar .head .dot { width:8px; height:8px; background:#fff; border-radius:50%;
+                         animation:blink 1.1s infinite; }
+  @keyframes blink { 50% { opacity:.15; } }
+  #alertBar ul { margin:0; padding:9px 16px 11px 32px; }
+  #alertBar li { margin:4px 0; font-size:13px; }
+  .sev-critical { color:var(--crit); font-weight:600; }
+  .sev-warning { color:var(--warn); }
+  #alertBar.empty { display:none; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:14px 16px; cursor:pointer; transition:.15s; }
+  .card:hover { border-color:var(--accent); box-shadow:0 2px 14px rgba(44,111,187,.10); }
+  .card.alarm { border-color:var(--crit); box-shadow:0 0 0 3px rgba(220,38,38,.09); }
+  .card .top { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .card .name { font-weight:600; font-size:15px; color:#14395f; }
+  .card .badge { margin-left:auto; font-size:11px; padding:2px 9px; border-radius:10px; }
+  .badge.on { background:#e7f7ed; color:var(--ok); }
+  .badge.off { background:#fdeaea; color:var(--crit); }
+  .kv { display:flex; align-items:center; gap:8px; margin:7px 0; font-size:12px; color:#4b5563; }
+  .kv .lab { width:46px; flex:none; }
+  .kv .val { width:64px; text-align:right; font-variant-numeric:tabular-nums; flex:none; }
+  .bar { flex:1; height:7px; background:#eef1f4; border-radius:4px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:#4c9a5f; border-radius:4px; transition:.4s; }
+  .bar > i.warn { background:#e0a11b; } .bar > i.crit { background:#dc2626; }
+  .meta { font-size:11px; color:#9ca3af; margin-top:8px; }
+  .empty { color:var(--muted); padding:26px; text-align:center; }
+
+  /* 详情抽屉 */
+  #drawer { position:fixed; inset:0; background:rgba(15,23,42,.35); display:none; z-index:30; }
+  #drawer.show { display:block; }
+  #drawerBox { position:absolute; right:0; top:0; bottom:0; width:min(880px,94vw);
+               background:var(--bg); box-shadow:-4px 0 24px rgba(0,0,0,.14);
+               display:flex; flex-direction:column; }
+  #drawerHead { padding:14px 20px; background:#fff; border-bottom:1px solid var(--line);
+                display:flex; align-items:center; gap:12px; }
+  #drawerHead h2 { margin:0; font-size:16px; color:#14395f; }
+  #drawerBody { overflow:auto; padding:16px 20px; }
+  .charts { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .cbox { background:#fff; border:1px solid var(--line); border-radius:10px; padding:11px 13px; }
+  .cbox h3 { margin:0 0 7px; font-size:12.5px; color:#374151; font-weight:600;
+             display:flex; justify-content:space-between; }
+  .cbox svg { width:100%; height:150px; display:block; }
+
+  table { width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; }
+  th,td { padding:9px 12px; text-align:left; border-bottom:1px solid #eef1f4; font-size:13px; }
+  th { background:#f8fafc; color:#374151; font-size:12px; font-weight:600; }
+  input,select { padding:6px 9px; border:1px solid #dde3ea; border-radius:6px;
+                 font-size:13px; font-family:inherit; background:#fff; }
+  input[type=number] { width:92px; }
+  .btn { background:var(--accent); color:#fff; border:0; padding:7px 16px; border-radius:7px;
+         cursor:pointer; font-size:13px; font-family:inherit; }
+  .btn:hover { background:#255e9f; }
+  .btn.ghost { background:#fff; color:var(--accent); border:1px solid var(--accent); }
+  .btn.sm { padding:4px 10px; font-size:12px; }
+  .btn.danger { background:#fff; color:var(--crit); border:1px solid #f3c0c0; }
+  .form-grid { display:grid; grid-template-columns:200px 1fr; gap:11px 16px; align-items:center;
+               background:#fff; padding:16px 18px; border:1px solid var(--line); border-radius:10px; }
+  .form-grid label { color:#374151; font-size:13px; }
+  .hint { font-size:11px; color:#9ca3af; }
+  #toast { position:fixed; right:20px; bottom:20px; padding:11px 16px; border-radius:9px;
+           font-size:13px; color:#fff; background:#334155; opacity:0; transition:.25s;
+           pointer-events:none; z-index:50; max-width:420px; white-space:pre-wrap; }
+  #toast.show { opacity:1; }
+  #toast.ok { background:#166534; } #toast.err { background:#991b1b; }
+  .hidden { display:none !important; }
+  .row-actions { display:flex; gap:6px; }
+
+  /* ── 运维页 ── */
+  .ops-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .ops-bar select { min-width:150px; }
+  .console-hero { display:flex; align-items:center; gap:20px; background:#fff;
+                  border:1px solid var(--line); border-radius:12px; padding:20px 22px;
+                  margin-bottom:14px; }
+  .console-hero .ch-left { flex:1; }
+  .console-hero .ch-title { font-size:15px; font-weight:600; color:#14395f; margin-bottom:6px; }
+  .console-hero .ch-desc { font-size:12.5px; color:#6b7280; line-height:1.75; }
+  .console-hero .ch-right { flex:none; }
+  .btn-lg { padding:12px 24px; font-size:14px; }
+  .taskbar { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+  .taskbtn { background:#fff; border:1px solid #dde3ea; border-radius:7px; padding:5px 11px;
+             font-size:12.5px; cursor:pointer; font-family:inherit; color:#374151; }
+  .taskbtn:hover { border-color:var(--accent); color:var(--accent); }
+  .taskbtn.off { opacity:.42; text-decoration:line-through; }
+  #taskOut { background:#0f1319; color:#d7dde6; border-radius:10px; padding:12px 14px;
+             font-family:"Noto Sans Mono CJK SC",monospace; font-size:12.5px;
+             height:240px; overflow:auto; white-space:pre-wrap; margin-top:10px;
+             border:1px solid #2a3140; display:none; }
+  #taskOut.show { display:block; }
+  details.panel { background:#fff; border:1px solid var(--line); border-radius:10px;
+                  padding:0; margin-top:12px; overflow:hidden; }
+  details.panel > summary { padding:10px 16px; cursor:pointer; font-size:13px; font-weight:600;
+                            color:#374151; list-style:none; }
+  details.panel > summary::-webkit-details-marker { display:none; }
+  details.panel > summary::before { content:"▸ "; color:#9ca3af; }
+  details.panel[open] > summary::before { content:"▾ "; }
+  details.panel .inner { padding:0 16px 14px; }
+  .conn-row input { width:100%; }
+  .conn-row input.small { width:74px; }
+  .ok-text { color:var(--ok); } .err-text { color:var(--crit); }
+
+  /* ── 告警记录管理 ── */
+  .stat-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+                gap:12px; margin-bottom:14px; }
+  .stat-card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:13px 16px; }
+  .stat-card .k { font-size:11.5px; color:#9ca3af; margin-bottom:6px; }
+  .stat-card .v { font-size:22px; font-weight:600; color:#14395f; font-variant-numeric:tabular-nums; }
+  .stat-card .v.crit { color:var(--crit); }
+  .stat-card .v.warn { color:var(--warn); }
+  .stat-card .sub { font-size:11px; color:#9ca3af; margin-top:4px; }
+  .filterbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+               background:#fff; border:1px solid var(--line); border-radius:10px;
+               padding:10px 14px; margin-bottom:12px; }
+  .filterbar label { font-size:12.5px; color:#6b7280; }
+  .filterbar input[type=text] { width:180px; }
+  .pager { display:flex; align-items:center; gap:10px; justify-content:center;
+           margin-top:14px; font-size:13px; color:#6b7280; }
+  .badge-sev { font-size:11px; padding:1px 7px; border-radius:9px; }
+  .badge-sev.critical { background:#fdeaea; color:var(--crit); }
+  .badge-sev.warning { background:#fef4e6; color:var(--warn); }
+  .badge-st { font-size:11px; padding:1px 7px; border-radius:9px; }
+  .badge-st.firing { background:#fdeaea; color:var(--crit); }
+  .badge-st.resolved { background:#e7f7ed; color:var(--ok); }
+  .note-cell { cursor:pointer; color:#6b7280; font-size:12.5px; }
+  .note-cell:hover { color:var(--accent); }
+  .note-cell.empty { color:#c4c9d1; }
+
+
+  /* ── 左侧边栏布局 ── */
+  .app { display:flex; min-height:100vh; }
+  .sidebar { width:214px; flex:none; background:#fff; border-right:1px solid var(--line);
+             display:flex; flex-direction:column; position:sticky; top:0; height:100vh;
+             transition:width .18s ease; z-index:20; }
+  .sidebar.collapsed { width:62px; }
+  .sb-brand { display:flex; align-items:center; gap:10px; padding:15px 14px 13px;
+              border-bottom:1px solid var(--line); overflow:hidden; }
+  .sb-logo { font-size:20px; flex:none; }
+  .sb-title { font-size:16px; font-weight:700; color:#14395f; white-space:nowrap; }
+  .sidebar.collapsed .sb-title,
+  .sidebar.collapsed .lbl,
+  .sidebar.collapsed .sb-badge { display:none; }
+  .sidebar.collapsed .sb-brand { justify-content:center; padding:15px 0 13px; }
+  .sidebar.collapsed .sb-nav button,
+  .sidebar.collapsed .sb-foot button { justify-content:center; padding:10px 0; }
+  .sb-nav { flex:1; padding:10px 8px; display:flex; flex-direction:column; gap:3px; overflow-y:auto; }
+  .sb-nav button, .sb-foot button {
+      display:flex; align-items:center; gap:10px; width:100%; border:0; background:transparent;
+      padding:9px 11px; border-radius:8px; cursor:pointer; font-size:13.5px; color:#374151;
+      font-family:inherit; text-align:left; white-space:nowrap; position:relative; }
+  .sb-nav button:hover, .sb-foot button:hover { background:#f1f5f9; }
+  .sb-nav button.active { background:#e8f1fb; color:var(--accent); font-weight:600; }
+  .sb-foot { border-top:1px solid var(--line); padding:8px; display:flex; flex-direction:column; gap:2px; }
+  .sb-foot button.danger { color:var(--crit); }
+  .sb-foot button.danger:hover { background:#fdeaea; }
+  .sb-toggle { color:#9ca3af !important; }
+  .ico { width:20px; text-align:center; flex:none; }
+  .sb-badge { margin-left:auto; background:var(--crit); color:#fff; font-size:10.5px;
+              padding:1px 6px; border-radius:9px; font-style:normal; }
+  .main { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .topbar { display:flex; align-items:center; gap:12px; padding:10px 22px; background:#fff;
+            border-bottom:1px solid var(--line); position:sticky; top:0; z-index:15; }
+  .wrap { max-width:none; margin:0; padding:16px 22px 60px; }
+
+  /* ── 主机管理表单弹窗 ── */
+  .modal-mask { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:60;
+                display:flex; align-items:center; justify-content:center; }
+  .modal { background:#fff; border-radius:12px; padding:20px 22px; width:520px; max-width:92vw;
+           box-shadow:0 20px 60px rgba(0,0,0,.25); }
+  .modal h3 { margin:0 0 14px; font-size:16px; color:#14395f; }
+  .modal .form-grid { padding:0; border:0; background:transparent; grid-template-columns:120px 1fr; gap:10px 14px; }
+  .hostbar { display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  .badge-src { font-size:11px; padding:1px 7px; border-radius:9px; }
+  .badge-src.agent { background:#e7f7ed; color:var(--ok); }
+  .badge-src.manual { background:#eef1f4; color:#6b7280; }
+
+
+  /* ── 命令库 ── */
+  .cmdbar { position:sticky; top:48px; z-index:6; background:#f6f8fb; padding:2px 0 12px;
+            display:flex; flex-direction:column; gap:10px; }
+  #cmdBuf { width:100%; max-width:540px; padding:9px 13px; border:1px solid var(--line);
+            border-radius:8px; font-size:13.5px; font-family:inherit; outline:none; }
+  #cmdBuf:focus { border-color:var(--accent); }
+  .cmdchips { display:flex; gap:8px; flex-wrap:wrap; }
+  .cmdchip { border:1px solid var(--line); background:#fff; padding:5px 13px; border-radius:16px;
+             font-size:12.5px; cursor:pointer; color:#374151; font-family:inherit; transition:.15s; }
+  .cmdchip:hover { border-color:var(--accent); color:var(--accent); }
+  .cmdchip.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .cmdgroup-title { font-size:12.5px; font-weight:700; color:#94a3b8; margin:20px 0 8px;
+                    letter-spacing:.6px; }
+  .cmdcard { background:#fff; border:1px solid var(--line); border-radius:10px;
+             padding:12px 15px; margin-bottom:10px; }
+  .cmdhead { display:flex; align-items:center; gap:9px; margin-bottom:9px; }
+  .cmdname { font-weight:600; font-size:14px; color:#14395f; }
+  .cmdhead .btn { margin-left:auto; }
+  .cmdwarn { background:#fdeaea; color:var(--crit); font-size:11px; padding:1px 8px; border-radius:8px; }
+  .cmdcode { background:#0f172a; color:#e2e8f0; padding:9px 13px; border-radius:7px;
+             font-family:ui-monospace,Consolas,"Courier New",monospace; font-size:12.5px;
+             overflow-x:auto; white-space:pre-wrap; word-break:break-all; margin:0 0 9px; line-height:1.55; }
+  .cmddesc { font-size:13px; color:#374151; line-height:1.65; }
+  .cmdrow { font-size:12.5px; color:#6b7280; line-height:1.7; margin-top:5px; }
+  .cmdrow b { color:#475569; font-weight:600; }
+  .cmdrow code { background:#f1f5f9; padding:1px 5px; border-radius:4px; color:#0f172a; }
+  #cmdEmpty { padding:50px; text-align:center; color:#94a3b8; font-size:13px; }
+
+  /* ── 文件管理 ── */
+  .filebar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .crumb { font-family:"Noto Sans Mono CJK SC",monospace; font-size:12.5px; color:#374151;
+           background:#fff; border:1px solid var(--line); border-radius:7px; padding:6px 11px;
+           flex:1; min-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .crumb a { color:var(--accent); text-decoration:none; cursor:pointer; }
+  .crumb a:hover { text-decoration:underline; }
+  #dropZone { border:2px dashed #cbd5e1; border-radius:10px; padding:14px; text-align:center;
+              font-size:12.5px; color:#9ca3af; margin-bottom:10px; transition:.15s; background:#fff; }
+  #dropZone.over { border-color:var(--accent); background:#eef5fd; color:var(--accent); }
+  .ftable td { padding:7px 10px; }
+  .ftable tr:hover { background:#f8fafc; }
+  .ftable .nm { display:flex; align-items:center; gap:7px; cursor:pointer; }
+  .ftable .nm:hover { color:var(--accent); }
+  .sz { font-variant-numeric:tabular-nums; color:#6b7280; }
+  .act a { color:var(--accent); text-decoration:none; font-size:12px; margin-right:10px; cursor:pointer; }
+  .act a.del { color:var(--crit); }
+  #upProg { height:4px; background:#eef1f4; border-radius:3px; overflow:hidden; margin-top:8px; display:none; }
+  #upProg > i { display:block; height:100%; width:0; background:var(--accent); transition:.2s; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-brand">
+      <span class="sb-logo">📊</span><span class="sb-title">Monitor</span>
+    </div>
+    <nav class="sb-nav">
+      <button data-tab="overview" class="active"><span class="ico">📈</span><span class="lbl">概览</span></button>
+      <button data-tab="alerts"><span class="ico">🔔</span><span class="lbl">告警</span><em class="sb-badge" id="sbAlertCount" style="display:none"></em></button>
+      <button data-tab="rules"><span class="ico">📐</span><span class="lbl">规则</span></button>
+      <button data-tab="ops"><span class="ico">🖥️</span><span class="lbl">运维</span></button>
+      <button data-tab="files"><span class="ico">📁</span><span class="lbl">文件</span></button>
+      <button data-tab="hosts"><span class="ico">🔌</span><span class="lbl">主机</span></button>
+      <button data-tab="cmds"><span class="ico">📚</span><span class="lbl">命令库</span></button>
+    </nav>
+    <div class="sb-foot">
+      <button data-tab="settings"><span class="ico">⚙️</span><span class="lbl">设置</span></button>
+      <button onclick="doLogout()"><span class="ico">↩</span><span class="lbl">登出</span></button>
+      <button class="danger" onclick="doShutdown()" title="停止后台服务（采集端和容器也会停）"><span class="ico">⏻</span><span class="lbl">退出后台</span></button>
+      <button class="sb-toggle" id="sbToggle" onclick="toggleSidebar()"><span class="ico">«</span><span class="lbl">收起</span></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <span id="connPill" class="pill">连接中…</span>
+      <span id="statPill" class="pill">—</span>
+    </header>
+
+<div class="wrap">
+  <div id="alertBar"><div class="head"><span class="dot"></span><span id="alertTitle">告警</span></div>
+    <ul id="alertList"></ul></div>
+
+  <!-- 概览 -->
+  <section id="tab-overview">
+    <div class="grid" id="hostGrid"><div class="empty">等待采集端上报…</div></div>
+  </section>
+
+  <!-- 告警记录管理 -->
+  <section id="tab-alerts" class="hidden">
+    <div class="stat-cards" id="alertStats"></div>
+
+    <div class="filterbar">
+      <label>状态</label>
+      <select id="f-status" onchange="applyFilter()">
+        <option value="all">全部</option><option value="firing">进行中</option><option value="resolved">已恢复</option>
+      </select>
+      <label>级别</label>
+      <select id="f-severity" onchange="applyFilter()">
+        <option value="all">全部</option><option value="critical">critical</option><option value="warning">warning</option>
+      </select>
+      <label>主机</label>
+      <select id="f-host" onchange="applyFilter()"><option value="">全部</option></select>
+      <label>时间</label>
+      <select id="f-days" onchange="applyFilter()">
+        <option value="1">近 1 天</option><option value="7" selected>近 7 天</option>
+        <option value="30">近 30 天</option><option value="0">全部</option>
+      </select>
+      <input type="text" id="f-q" placeholder="搜规则/主机/备注" onkeydown="if(event.key==='Enter')applyFilter()">
+      <button class="btn sm" onclick="applyFilter()">查询</button>
+      <button class="btn ghost sm" onclick="exportCsv()">⤓ 导出 CSV</button>
+      <button class="btn danger sm" onclick="bulkDelete()">删除选中</button>
+    </div>
+
+    <table class="ftable">
+      <thead><tr>
+        <th style="width:34px"><input type="checkbox" id="alertCheckAll" onchange="alertToggleAll(this.checked)"></th>
+        <th style="width:150px">开始时间</th>
+        <th style="width:130px">规则</th>
+        <th style="width:120px">主机</th>
+        <th style="width:84px">级别</th>
+        <th style="width:86px">状态</th>
+        <th style="width:150px">触发值</th>
+        <th style="width:90px">持续</th>
+        <th>备注</th>
+        <th style="width:150px">操作</th>
+      </tr></thead>
+      <tbody id="alertRows"></tbody>
+    </table>
+    <div class="pager" id="alertPager"></div>
+  </section>
+
+  <!-- 规则 -->
+  <section id="tab-rules" class="hidden">
+    <table>
+      <thead><tr><th style="width:150px">名称</th><th style="width:150px">指标</th>
+        <th style="width:80px">条件</th><th style="width:90px">阈值</th>
+        <th style="width:110px">持续时间</th><th style="width:100px">级别</th>
+        <th style="width:80px">启用</th><th style="width:140px"></th></tr></thead>
+      <tbody id="ruleRows"></tbody>
+    </table>
+    <div style="margin-top:14px">
+      <button class="btn ghost" onclick="renderRuleRow({name:'',metric:'cpu_pct',op:'>',threshold:80,duration_sec:120,severity:'warning',enabled:1,id:null})">+ 新增规则</button>
+      <span class="hint" style="margin-left:12px">改完点「保存」立刻生效；内置规则不能删除，但可以停用</span>
+    </div>
+  </section>
+
+  <!-- 设置 -->
+  <section id="tab-settings" class="hidden">
+    <div class="form-grid">
+      <label>采集周期（秒）</label>
+      <div><input type="number" id="s-interval" min="1" max="3600">
+        <span class="hint">采集端下一次上报后生效（服务端会下发新周期）</span></div>
+
+      <label>原始数据保留（小时）</label>
+      <div><input type="number" id="s-raw" min="1" max="720">
+        <span class="hint">精确曲线用的原始点</span></div>
+
+      <label>聚合数据保留（天）</label>
+      <div><input type="number" id="s-aggdays" min="1" max="365">
+        <span class="hint">5 分钟粒度的历史</span></div>
+
+      <label>聚合步长（秒）</label>
+      <div><input type="number" id="s-aggstep" min="60" max="86400">
+        <span class="hint">默认 300（5 分钟）</span></div>
+
+      <label>离线判定（秒）</label>
+      <div><input type="number" id="s-offline" min="10" max="3600">
+        <span class="hint">超过这么久没上报就判定主机离线</span></div>
+
+      <label>告警评估间隔（秒）</label>
+      <div><input type="number" id="s-eval" min="1" max="60"></div>
+
+      <label>采集上报 token</label>
+      <div><input type="text" id="s-token" style="width:300px">
+        <span class="hint">改了之后所有采集端都要同步改，否则会被 401 拒绝</span></div>
+    </div>
+    <div style="margin-top:14px"><button class="btn" onclick="saveSettings()">保存设置</button></div>
+    <div class="meta" id="statLine" style="margin-top:16px"></div>
+
+    <div class="form-grid" style="margin-top:22px">
+      <label style="font-weight:600;color:#14395f">修改登录密码</label>
+      <div class="hint">至少 6 位。改完当前会话仍然有效，下次登录用新密码。</div>
+      <label>当前密码</label><div><input type="password" id="pw-old" style="width:240px"></div>
+      <label>新密码</label><div><input type="password" id="pw-new" style="width:240px"></div>
+      <label>再输一次</label><div><input type="password" id="pw-new2" style="width:240px"></div>
+    </div>
+    <div style="margin-top:12px"><button class="btn" onclick="changePassword()">修改密码</button></div>
+  </section>
+
+<!-- 文件管理（SFTP） -->
+  <section id="tab-files" class="hidden">
+    <div class="filebar">
+      <label style="font-size:13px;color:#374151">主机：</label>
+      <select id="fileHost"></select>
+      <button class="btn ghost sm" onclick="fileUp()">↑ 上级</button>
+      <button class="btn ghost sm" onclick="fileRefresh()">⟳ 刷新</button>
+      <button class="btn ghost sm" onclick="fileMkdir()">+ 新建文件夹</button>
+      <button class="btn sm" onclick="document.getElementById('fileInput').click()">⬆ 上传文件</button>
+      <button class="btn danger sm" onclick="fileDelete()">删除选中</button>
+      <input type="file" id="fileInput" multiple style="display:none">
+    </div>
+
+    <div class="crumb" id="fileCrumb">/</div>
+    <div id="upProg"><i></i></div>
+    <div id="dropZone">把文件拖到这里上传（也可以点上面的「上传文件」）</div>
+
+    <table class="ftable">
+      <thead><tr>
+        <th style="width:34px"><input type="checkbox" id="fileCheckAll" onchange="fileToggleAll(this.checked)"></th>
+        <th>名称</th><th style="width:110px">大小</th>
+        <th style="width:170px">修改时间</th><th style="width:70px">权限</th><th style="width:120px">操作</th>
+      </tr></thead>
+      <tbody id="fileRows"></tbody>
+    </table>
+    <div class="meta" id="fileMeta" style="margin-top:10px"></div>
+  </section>
+
+<!-- 运维（远程 SSH 终端） -->
+  <section id="tab-ops" class="hidden">
+    <div class="ops-bar">
+      <label style="font-size:13px;color:#374151">主机：</label>
+      <select id="opsHost"></select>
+      <span id="opsStatus" class="pill">就绪</span>
+    </div>
+
+    <div class="console-hero">
+      <div class="ch-left">
+        <div class="ch-title">🖥 打开系统控制台</div>
+        <div class="ch-desc">点按钮会在<b>本机桌面弹出原生终端窗口</b>（和 Ctrl+Alt+T 一样），
+          并且已经用密钥自动 SSH 登录到所选主机。断开后窗口会保留，按 Enter 关闭。</div>
+      </div>
+      <div class="ch-right">
+        <button class="btn btn-lg" onclick="openConsole()">连接并打开控制台</button>
+      </div>
+    </div>
+
+    <div class="taskbar" id="taskBar"></div>
+    <pre id="taskOut"></pre>
+
+    <details class="panel">
+      <summary>⚙ 连接设置（SSH 地址 / 用户 / 密钥）</summary>
+      <div class="inner">
+        <table>
+          <thead><tr><th style="width:130px">主机</th><th style="width:130px">SSH 地址</th>
+            <th style="width:110px">用户</th><th style="width:80px">端口</th>
+            <th style="width:70px">系统</th><th>密钥路径</th>
+            <th style="width:60px">启用</th><th style="width:150px"></th></tr></thead>
+          <tbody id="credsRows"></tbody>
+        </table>
+        <div class="hint" style="margin-top:10px">
+          密钥路径支持 ~ 开头。生成：<code>ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_monitor</code>，
+          再把 <code>~/.ssh/id_monitor.pub</code> 追加到目标机的 <code>~/.ssh/authorized_keys</code>。
+        </div>
+      </div>
+    </details>
+
+    <details class="panel">
+      <summary>📋 任务管理（勾选启用哪些快捷任务）</summary>
+      <div class="inner">
+        <table>
+          <thead><tr><th style="width:130px">名称</th><th>Linux 命令</th><th>Windows 命令</th>
+            <th style="width:70px">启用</th><th style="width:80px"></th></tr></thead>
+          <tbody id="taskRows"></tbody>
+        </table>
+        <div style="margin-top:10px">
+          <button class="btn ghost" onclick="addTask()">+ 新增任务</button>
+          <span class="hint" style="margin-left:10px">内置任务不能删除，可以停用</span>
+        </div>
+      </div>
+    </details>
+
+    <details class="panel">
+      <summary>📜 操作审计（最近 50 条）</summary>
+      <div class="inner"><table>
+        <thead><tr><th style="width:150px">时间</th><th style="width:120px">主机</th>
+          <th style="width:110px">来源</th><th>命令</th><th style="width:60px">返回码</th></tr></thead>
+        <tbody id="logRows"></tbody>
+      </table></div>
+    </details>
+
+  </section>
+
+  <!-- 主机管理 -->
+  <section id="tab-hosts" class="hidden">
+    <div class="hostbar">
+      <button class="btn" onclick="hostFormOpen()">+ 新增主机</button>
+      <button class="btn ghost" onclick="hostMgrLoad()">⟳ 刷新</button>
+      <span class="hint">手动添加的主机默认<b>只做 SSH 运维、不产生告警</b>；勾选「参与监控」才会评估规则（需要装采集端）</span>
+    </div>
+    <table class="ftable">
+      <thead><tr>
+        <th style="width:150px">名称</th>
+        <th style="width:140px">SSH 地址</th>
+        <th style="width:100px">用户</th>
+        <th style="width:64px">端口</th>
+        <th style="width:90px">系统</th>
+        <th style="width:80px">来源</th>
+        <th style="width:88px">监控</th>
+        <th style="width:80px">状态</th>
+        <th style="width:250px">操作</th>
+      </tr></thead>
+      <tbody id="hostMgrRows"></tbody>
+    </table>
+    <div id="hostMsg" style="margin-top:12px"></div>
+
+  </section>
+
+  <!-- 命令库 -->
+  <section id="tab-cmds" class="hidden">
+    <div class="cmdbar">
+      <input id="cmdBuf" placeholder="🔍 搜索命令 / 说明 / 参数（如：磁盘、端口、备份）" oninput="renderCmdLib()">
+      <div class="cmdchips" id="cmdChips"></div>
+    </div>
+    <div id="cmdList"><div id="cmdEmpty">加载中…</div></div>
+  </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- 主机新增/编辑弹窗 -->
+<div class="modal-mask hidden" id="hostForm">
+  <div class="modal">
+    <h3 id="hostFormTitle">新增主机</h3>
+    <div class="form-grid">
+      <label>主机 ID</label><div><input id="hf-id" placeholder="例如 192-168-1-50"><span class="hint">唯一标识，创建后不可改</span></div>
+      <label>显示名称</label><div><input id="hf-name" placeholder="例如 测试服务器"></div>
+      <label>SSH 地址</label><div><input id="hf-host" placeholder="192.168.1.50"></div>
+      <label>用户名</label><div><input id="hf-user" placeholder="root"></div>
+      <label>端口</label><div><input id="hf-port" type="number" value="22" style="max-width:110px"></div>
+      <label>密钥路径</label><div><input id="hf-key" value="~/.ssh/id_monitor"></div>
+      <label>系统类型</label><div><select id="hf-os" style="max-width:160px"><option value="linux">Linux</option><option value="windows">Windows</option></select></div>
+      <label>参与监控</label><div><label style="font-size:13px"><input type="checkbox" id="hf-monitor"> 采集指标并评估告警</label></div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn ghost" onclick="hostFormClose()">取消</button>
+      <button class="btn" onclick="hostFormSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 详情抽屉 -->
+<div id="drawer" onclick="if(event.target.id==='drawer')closeDrawer()">
+  <div id="drawerBox">
+    <div id="drawerHead">
+      <h2 id="dName">主机详情</h2>
+      <span class="pill" id="dMeta"></span>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <select id="rangeSel">
+          <option value="0">实时滚动</option>
+          <option value="1">近 1 小时</option>
+          <option value="6">近 6 小时</option>
+          <option value="24" selected>近 24 小时</option>
+          <option value="168">近 7 天</option>
+        </select>
+        <button class="btn ghost sm" onclick="closeDrawer()">关闭</button>
+      </div>
+    </div>
+    <div id="drawerBody">
+      <div class="charts">
+        <div class="cbox"><h3><span>CPU 使用率（%）</span><span class="meta" id="v-cpu"></span></h3><svg id="c-cpu"></svg></div>
+        <div class="cbox"><h3><span>内存使用率（%）</span><span class="meta" id="v-mem"></span></h3><svg id="c-mem"></svg></div>
+        <div class="cbox"><h3><span>磁盘使用率（%）</span><span class="meta" id="v-disk"></span></h3><svg id="c-disk"></svg></div>
+        <div class="cbox"><h3><span>每核负载</span><span class="meta" id="v-load"></span></h3><svg id="c-load"></svg></div>
+      </div>
+      <div class="meta" id="dSrc" style="margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
+<div class="shutdown-mask" id="shutdownMask">
+  <div class="big">⏻</div>
+  <div>后台服务已关闭</div>
+  <div class="hint" style="color:#94a3b8">采集端和模拟主机会一起停止。现在可以关闭这个页面了。</div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = async (u, o) => {
+  const r = await fetch(u, o);
+  const body = r.headers.get('content-type')?.includes('json') ? await r.json() : await r.text();
+  if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+  if (!r.ok) throw new Error((body && body.error) || ('HTTP ' + r.status));
+  return body;
+};
+function toast(msg, kind) {
+  const t = $('#toast');
+  t.textContent = msg; t.className = 'show ' + (kind || '');
+  clearTimeout(t._h); t._h = setTimeout(() => t.className = '', 2600);
+}
+const pctCls = v => v == null ? '' : (v >= 90 ? 'crit' : v >= 80 ? 'warn' : '');
+const bar = v => `<div class="bar"><i class="${pctCls(v)}" style="width:${Math.min(100, v || 0)}%"></i></div>`;
+const fmt = (v, d = 1) => v == null ? '—' : Number(v).toFixed(d);
+
+// ================= 状态 =================
+const S = {
+  hosts: {}, alerts: [], rules: [], settings: {},
+  rolling: {},          // `${hostId}|${metric}` -> [[ts, v], ...]
+  drawerHost: null,
+  es: null,
+};
+
+// ================= 标签页 =================
+const TABS = ['overview', 'alerts', 'rules', 'ops', 'files', 'hosts', 'cmds', 'settings'];
+
+function switchTab(name) {
+  document.querySelectorAll('[data-tab]').forEach(x =>
+    x.classList.toggle('active', x.dataset.tab === name));
+  TABS.forEach(t => $('#tab-' + t).classList.toggle('hidden', t !== name));
+  if (name === 'alerts') loadRecords();
+  if (name === 'rules') renderRules();
+  if (name === 'settings') fillSettings();
+  if (name === 'ops') initOps();
+  if (name === 'files') initFiles();
+  if (name === 'hosts') hostMgrLoad();
+  if (name === 'cmds') cmdLibLoad();
+}
+document.querySelectorAll('[data-tab]').forEach(b => {
+  b.onclick = () => switchTab(b.dataset.tab);
+});
+
+// ---------- 侧边栏折叠 ----------
+function applySidebar(collapsed) {
+  $('#sidebar').classList.toggle('collapsed', collapsed);
+  const btn = $('#sbToggle');
+  if (btn) btn.innerHTML = `<span class="ico">${collapsed ? '»' : '«'}</span>`
+                           + (collapsed ? '' : '<span class="lbl">收起</span>');
+  if (btn) btn.title = collapsed ? '展开侧边栏' : '收起侧边栏';
+}
+function toggleSidebar() {
+  const collapsed = !$('#sidebar').classList.contains('collapsed');
+  applySidebar(collapsed);
+  localStorage.setItem('monitor.sidebar.collapsed', collapsed ? '1' : '0');
+  // WebView 里窗口宽度变了，图表要重算
+  window.dispatchEvent(new Event('resize'));
+}
+
+// ================= SSE =================
+function connect() {
+  if (S.es) S.es.close();
+  const es = new EventSource('/api/stream');
+  S.es = es;
+  es.onopen = () => { $('#connPill').textContent = '实时已连接'; $('#connPill').className = 'pill on'; };
+  es.onerror = () => { $('#connPill').textContent = '连接断开，重连中…'; $('#connPill').className = 'pill off'; };
+
+  es.addEventListener('snapshot', e => {
+    const d = JSON.parse(e.data);
+    S.hosts = Object.fromEntries(d.hosts.map(h => [h.id, h]));
+    S.alerts = d.alerts; S.rules = d.rules; S.settings = d.settings;
+    renderHosts(); renderAlerts(); updateStat(d.stats); fillSettings();
+  });
+  es.addEventListener('metrics', e => {
+    const d = JSON.parse(e.data);
+    const h = S.hosts[d.host_id];
+    if (h) {
+      h.metrics = Object.assign(h.metrics || {}, d.metrics);
+      h.last_seen = d.ts; h.online = true;
+      h.in_container = d.in_container; h.cpu_cores = d.cpu_cores;
+    } else {
+      S.hosts[d.host_id] = { id: d.host_id, name: d.host_id, metrics: d.metrics,
+                             online: true, last_seen: d.ts, info: {} };
+    }
+    // 滚动缓冲（实时图用）
+    for (const k of ['cpu_pct', 'mem_pct', 'disk_pct', 'load1_per_core']) {
+      if (d.metrics[k] == null) continue;
+      const key = d.host_id + '|' + k;
+      (S.rolling[key] = S.rolling[key] || []).push([d.ts * 1000, d.metrics[k]]);
+      if (S.rolling[key].length > 180) S.rolling[key].shift();
+    }
+    renderHosts();
+    if (S.drawerHost === d.host_id) renderDrawerLive();
+  });
+  es.addEventListener('alert_firing', e => {
+    const a = JSON.parse(e.data);
+    S.alerts = [a, ...S.alerts.filter(x => x.id !== a.id)];
+    renderAlerts(); renderHosts();
+    toast(`🔴 新告警：${a.rule_name} @ ${a.host_name}`, 'err');
+    if (!$('#tab-alerts').classList.contains('hidden')) loadRecords();
+  });
+  es.addEventListener('alert_resolved', e => {
+    const d = JSON.parse(e.data);
+    S.alerts = S.alerts.filter(x => x.id !== d.id);
+    renderAlerts(); renderHosts();
+    toast(`✅ 已恢复：${d.rule_name} @ ${d.host_name}`, 'ok');
+  });
+  es.addEventListener('alert_acked', e => {
+    const d = JSON.parse(e.data);
+    // 确认后立刻从横幅/卡片告警态里移除，不用等下一次轮询
+    S.alerts = S.alerts.filter(x => x.id !== d.id);
+    renderAlerts(); renderHosts();
+    if (!$('#tab-alerts').classList.contains('hidden')) loadRecords();
+  });
+  es.addEventListener('rules_changed', async () => {
+    S.rules = await api('/api/rules'); renderRules();
+  });
+  es.addEventListener('hosts_changed', () => {
+    if (!$('#tab-hosts').classList.contains('hidden')) hostMgrLoad();
+  });
+  es.addEventListener('settings_changed', async () => {
+    S.settings = await api('/api/settings'); fillSettings();
+  });
+}
+
+function updateStat(st) {
+  if (!st) return;
+  $('#statPill').textContent = `${st.hosts} 台主机 · ${st.raw_points} 原始点 · ${st.agg_points} 聚合点`;
+  $('#statLine').textContent =
+    `聚合表 ${st.agg_points} 个点` + (st.oldest_agg
+      ? `，最早 ${new Date(st.oldest_agg * 1000).toLocaleString()}` : '') +
+    ` · 活跃告警 ${st.firing_alerts} 条`;
+}
+
+// ================= 概览 =================
+function renderHosts() {
+  const ids = Object.keys(S.hosts);
+  if (!ids.length) { $('#hostGrid').innerHTML = '<div class="empty">等待采集端上报…</div>'; return; }
+  const alarming = new Set(S.alerts.map(a => a.host_id));
+  $('#hostGrid').innerHTML = ids.sort().map(id => {
+    const h = S.hosts[id], m = h.metrics || {};
+    const badge = h.online
+      ? '<span class="badge on">在线</span>'
+      : '<span class="badge off">离线</span>';
+    const cls = (!h.online || alarming.has(id)) ? 'alarm' : '';
+    const core = h.source === 'manual'
+      ? (h.monitor ? '手动·已启用监控' : '仅 SSH 运维')
+      : (h.in_container ? `容器·${fmt(h.cpu_cores, 0)}核` : `物理机·${fmt(h.cpu_cores, 0)}核`);
+    return `<div class="card ${cls}" onclick="openDrawer('${id}')">
+      <div class="top"><span class="name">${h.name}</span>${badge}</div>
+      <div class="kv"><span class="lab">CPU</span>${bar(m.cpu_pct)}<span class="val">${fmt(m.cpu_pct)}%</span></div>
+      <div class="kv"><span class="lab">内存</span>${bar(m.mem_pct)}<span class="val">${fmt(m.mem_pct)}%</span></div>
+      <div class="kv"><span class="lab">磁盘</span>${bar(m.disk_pct)}<span class="val">${fmt(m.disk_pct)}%</span></div>
+      <div class="kv"><span class="lab">负载</span><span style="flex:1;color:#6b7280">${fmt(m.load1_per_core, 2)}/核</span></div>
+      <div class="meta">${core} · ${h.info?.os || ''}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderAlerts() {
+  const badge = $('#sbAlertCount');
+  if (badge) {
+    badge.textContent = S.alerts.length;
+    badge.style.display = S.alerts.length ? '' : 'none';
+  }
+  const bar = $('#alertBar'), list = $('#alertList');
+  if (!S.alerts.length) { bar.classList.remove('show'); return; }
+  bar.classList.add('show');
+  const crit = S.alerts.filter(a => a.severity === 'critical').length;
+  $('#alertTitle').textContent = `活跃告警 ${S.alerts.length} 条` +
+    (crit ? `（${crit} 条严重）` : '');
+  list.innerHTML = S.alerts.map(a =>
+    `<li><span class="sev-${a.severity}">${a.severity === 'critical' ? '🔴' : '🟡'} ${a.rule_name}</span>
+      · ${a.host_name} — ${a.metric} ${a.op} ${a.threshold}，当前 ${fmt(a.value, 2)}</li>`).join('');
+}
+
+// ================= 详情抽屉 =================
+function openDrawer(id) {
+  S.drawerHost = id;
+  const h = S.hosts[id];
+  $('#dName').textContent = h.name;
+  $('#dMeta').textContent = (h.info?.os || '') + ' · ' + (h.info?.kernel || '');
+  $('#drawer').classList.add('show');
+  $('#rangeSel').value = '0';
+  loadHistory();
+}
+function closeDrawer() { $('#drawer').classList.remove('show'); S.drawerHost = null; }
+$('#rangeSel').onchange = loadHistory;
+
+const CHARTS = {
+  cpu_pct:        { el: '#c-cpu',  color: '#2c6fbb', min: 0, max: 100, d: 0, v: '#v-cpu' },
+  mem_pct:        { el: '#c-mem',  color: '#7c5cbf', min: 0, max: 100, d: 0, v: '#v-mem' },
+  disk_pct:       { el: '#c-disk', color: '#e0a11b', min: 0, max: 100, d: 0, v: '#v-disk' },
+  load1_per_core: { el: '#c-load', color: '#4c9a5f', d: 2, v: '#v-load' },
+};
+
+function drawChart(svg, pts, cfg) {
+  const W = svg.clientWidth || 380, H = 150, P = { l: 40, r: 10, t: 10, b: 22 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  if (!pts || pts.length < 2) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#9ca3af" font-size="12">暂无数据</text>`;
+    return;
+  }
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1] ?? 0);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = cfg.min != null ? cfg.min : Math.min(...ys, 0);
+  const y1 = cfg.max != null ? cfg.max : Math.max(...ys, 1);
+  const sx = v => P.l + (x1 === x0 ? 0 : (v - x0) / (x1 - x0) * iw);
+  const sy = v => P.t + ih - (y1 === y0 ? ih / 2 : (v - y0) / (y1 - y0) * ih);
+  let g = '';
+  for (let i = 0; i <= 4; i++) {
+    const y = P.t + ih * i / 4, val = y1 - (y1 - y0) * i / 4;
+    g += `<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="#eef1f4"/>`;
+    g += `<text x="${P.l-5}" y="${y+3}" text-anchor="end" fill="#9ca3af" font-size="9.5">${val.toFixed(cfg.d)}</text>`;
+  }
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${sx(p[0]).toFixed(1)},${sy(p[1] ?? 0).toFixed(1)}`).join(' ');
+  g += `<path d="${line} L${sx(x1).toFixed(1)},${P.t+ih} L${sx(x0).toFixed(1)},${P.t+ih} Z" fill="${cfg.color}1f"/>`;
+  g += `<path d="${line}" fill="none" stroke="${cfg.color}" stroke-width="1.8"/>`;
+  const tfmt = t => { const d = new Date(t);
+    return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0'); };
+  [0, 0.5, 1].forEach(f => {
+    const t = x0 + (x1 - x0) * f;
+    g += `<text x="${sx(t)}" y="${H-5}" text-anchor="middle" fill="#9ca3af" font-size="9.5">${tfmt(t)}</text>`;
+  });
+  svg.innerHTML = g;
+}
+
+async function loadHistory() {
+  if (!S.drawerHost) return;
+  const hours = Number($('#rangeSel').value);
+  const host = S.hosts[S.drawerHost];
+  if (hours === 0) { renderDrawerLive(true); return; }
+  let src = '';
+  for (const [metric, cfg] of Object.entries(CHARTS)) {
+    try {
+      const d = await api(`/api/history?host_id=${encodeURIComponent(S.drawerHost)}&metric=${metric}&hours=${hours}`);
+      src = d.source;
+      drawChart($(cfg.el), d.points, cfg);
+      const last = d.points.length ? d.points[d.points.length - 1][1] : null;
+      $(cfg.v).textContent = fmt(last, cfg.d);
+    } catch (e) { drawChart($(cfg.el), [], cfg); }
+  }
+  $('#dSrc').textContent = (src === 'agg'
+    ? '（超出原始保留期，数据来自 5 分钟聚合表）'
+    : src === 'raw' ? '（原始精度）' : '') + ` · 主机 ${host?.name || ''}`;
+}
+
+function renderDrawerLive(refill) {
+  if (!S.drawerHost) return;
+  if (Number($('#rangeSel').value) !== 0) return;
+  for (const [metric, cfg] of Object.entries(CHARTS)) {
+    const pts = S.rolling[S.drawerHost + '|' + metric] || [];
+    drawChart($(cfg.el), pts, cfg);
+    const last = pts.length ? pts[pts.length - 1][1] : null;
+    $(cfg.v).textContent = fmt(last, cfg.d);
+  }
+  if (refill) $('#dSrc').textContent = '（实时滚动，最近约 30 分钟）';
+}
+
+// ================= 告警记录管理 =================
+const AF = { status:'all', severity:'all', host_id:'', days:7, q:'', page:0, size:50, total:0 };
+
+function applyFilter() {
+  AF.status = $('#f-status').value;
+  AF.severity = $('#f-severity').value;
+  AF.host_id = $('#f-host').value;
+  AF.days = Number($('#f-days').value);
+  AF.q = $('#f-q').value.trim();
+  AF.page = 0;
+  loadRecords();
+}
+
+function _q() {
+  const p = new URLSearchParams({
+    status: AF.status, severity: AF.severity, host_id: AF.host_id,
+    days: String(AF.days), q: AF.q,
+    limit: String(AF.size), offset: String(AF.page * AF.size),
+  });
+  return p.toString();
+}
+
+async function loadRecords() {
+  const tb = $('#alertRows');
+  tb.innerHTML = '<tr><td colspan="10" class="hint">加载中…</td></tr>';
+  try {
+    const [d, st, hosts] = await Promise.all([
+      api('/api/alerts/records?' + _q()),
+      api('/api/alerts/stats?days=' + (AF.days || 3650)),
+      api('/api/hosts'),
+    ]);
+    AF.total = d.total;
+    renderStats(st);
+    // 主机下拉只填一次
+    const sel = $('#f-host');
+    if (sel.options.length <= 1) {
+      sel.innerHTML = '<option value="">全部</option>' +
+        hosts.map(h => `<option value="${h.id}">${h.name}</option>`).join('');
+      sel.value = AF.host_id;
+    }
+    renderRecords(d.rows);
+    renderPager();
+  } catch (e) {
+    tb.innerHTML = `<tr><td colspan="10" class="err-text">${e.message}</td></tr>`;
+  }
+}
+
+function renderStats(st) {
+  const sev = st.by_severity || {};
+  const topHost = (st.by_host || [])[0];
+  const topRule = (st.by_rule || [])[0];
+  $('#alertStats').innerHTML = `
+    <div class="stat-card"><div class="k">告警总数</div>
+      <div class="v">${st.total}</div><div class="sub">近 ${AF.days || '全部'} ${AF.days ? '天' : ''}</div></div>
+    <div class="stat-card"><div class="k">当前活跃</div>
+      <div class="v ${st.firing ? 'crit' : ''}">${st.firing}</div>
+      <div class="sub">进行中未恢复</div></div>
+    <div class="stat-card"><div class="k">严重 / 警告</div>
+      <div class="v"><span class="crit">${sev.critical || 0}</span> / <span class="warn">${sev.warning || 0}</span></div>
+      <div class="sub">critical / warning</div></div>
+    <div class="stat-card"><div class="k">平均持续</div>
+      <div class="v">${st.avg_duration_sec != null ? st.avg_duration_sec + 's' : '—'}</div>
+      <div class="sub">从触发到恢复</div></div>
+    <div class="stat-card"><div class="k">告警最多</div>
+      <div class="v" style="font-size:15px">${topHost ? topHost.name : '—'}</div>
+      <div class="sub">${topHost ? topHost.n + ' 次' : ''}${topRule ? ' · ' + topRule.name : ''}</div></div>`;
+}
+
+function fmtDur(a) {
+  if (!a.resolved_at) return '<span class="hint">进行中</span>';
+  const s = a.resolved_at - a.started_at;
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm' + (s%60) + 's';
+  return Math.floor(s/3600) + 'h' + Math.floor((s%3600)/60) + 'm';
+}
+
+function renderRecords(rows) {
+  const tb = $('#alertRows');
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="10" class="empty">没有符合条件的告警记录</td></tr>'; return; }
+  tb.innerHTML = rows.map(a => `
+    <tr>
+      <td><input type="checkbox" class="achk" value="${a.id}"></td>
+      <td>${new Date(a.started_at * 1000).toLocaleString()}</td>
+      <td>${a.rule_name}</td>
+      <td>${a.host_name}</td>
+      <td><span class="badge-sev ${a.severity}">${a.severity}</span></td>
+      <td><span class="badge-st ${a.status}">${a.status === 'firing' ? '进行中' : '已恢复'}</span></td>
+      <td class="sz">${a.metric} ${a.op} ${a.threshold} → <b>${a.value}</b></td>
+      <td class="sz">${fmtDur(a)}</td>
+      <td class="note-cell ${a.note ? '' : 'empty'}" onclick="editNote(${a.id}, ${JSON.stringify(a.note || '').replace(/"/g,'&quot;')})">
+        ${a.note ? a.note.replace(/</g,'&lt;') : '点击添加备注'}</td>
+      <td class="act">
+        ${a.status === 'firing' && !a.acked ? `<a onclick="ackRecord(${a.id})">确认</a>` : ''}
+        ${a.acked ? '<span class="hint">已确认 </span>' : ''}
+        <a class="del" onclick="delRecord(${a.id})">删除</a>
+      </td>
+    </tr>`).join('');
+}
+
+function renderPager() {
+  const pages = Math.max(1, Math.ceil(AF.total / AF.size));
+  const cur = AF.page + 1;
+  $('#alertPager').innerHTML = `
+    <span>共 ${AF.total} 条 · 第 ${cur}/${pages} 页</span>
+    <button class="btn ghost sm" ${AF.page === 0 ? 'disabled' : ''} onclick="pageGo(-1)">上一页</button>
+    <button class="btn ghost sm" ${cur >= pages ? 'disabled' : ''} onclick="pageGo(1)">下一页</button>`;
+}
+function pageGo(d) { AF.page = Math.max(0, AF.page + d); loadRecords(); }
+
+function alertToggleAll(on) {
+  document.querySelectorAll('.achk').forEach(c => c.checked = on);
+}
+
+async function ackRecord(id) {
+  const note = prompt('确认这条告警？可填写处理备注（可留空）：', '');
+  if (note === null) return;
+  try {
+    await api(`/api/alerts/${id}/ack`, { method: 'POST' });
+    if (note.trim()) await api(`/api/alerts/${id}/note`, { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({ note }) });
+    toast('已确认', 'ok');
+    loadRecords();
+  } catch (e) { toast('确认失败：' + e.message, 'err'); }
+}
+
+async function editNote(id, old) {
+  const note = prompt('备注（留空则清除）：', old || '');
+  if (note === null) return;
+  try {
+    await api(`/api/alerts/${id}/note`, { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({ note }) });
+    toast('备注已保存', 'ok');
+    loadRecords();
+  } catch (e) { toast('保存失败：' + e.message, 'err'); }
+}
+
+async function delRecord(id) {
+  if (!confirm('确定删除这条告警记录？删除后不可恢复。')) return;
+  try {
+    await api(`/api/alerts/${id}`, { method: 'DELETE' });
+    toast('已删除', 'ok');
+    loadRecords();
+  } catch (e) { toast('删除失败：' + e.message, 'err'); }
+}
+
+async function bulkDelete() {
+  const ids = [...document.querySelectorAll('.achk:checked')].map(c => Number(c.value));
+  if (!ids.length) return toast('先勾选要删除的记录', 'err');
+  if (!confirm(`确定删除选中的 ${ids.length} 条告警记录？`)) return;
+  try {
+    const d = await api('/api/alerts/bulk-delete', { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({ ids }) });
+    toast(`已删除 ${d.deleted} 条`, 'ok');
+    loadRecords();
+  } catch (e) { toast('删除失败：' + e.message, 'err'); }
+}
+
+function exportCsv() {
+  window.location = '/api/alerts/export.csv?' + _q();
+}
+
+// ================= 规则页 =================
+const METRICS = ['cpu_pct','mem_pct','swap_pct','disk_pct','load1_per_core',
+                 'net_rx_kbps','net_tx_kbps','procs','uptime_hours','agent_up'];
+function renderRules() {
+  $('#ruleRows').innerHTML = S.rules.map(r => `
+    <tr data-id="${r.id}">
+      <td>${r.builtin ? '<span class="hint">内置 </span>' : ''}${r.name}</td>
+      <td><select onchange="editRule(${r.id},'metric',this.value)">
+        ${METRICS.map(m => `<option ${m === r.metric ? 'selected' : ''}>${m}</option>`).join('')}
+      </select></td>
+      <td><select onchange="editRule(${r.id},'op',this.value)">
+        ${['>','>=','<','<=','==','!='].map(o => `<option ${o === r.op ? 'selected' : ''}>${o}</option>`).join('')}
+      </select></td>
+      <td><input type="number" step="0.1" value="${r.threshold}" onchange="editRule(${r.id},'threshold',+this.value)"></td>
+      <td><input type="number" value="${r.duration_sec}" onchange="editRule(${r.id},'duration_sec',+this.value)"> 秒</td>
+      <td><select onchange="editRule(${r.id},'severity',this.value)">
+        <option ${r.severity==='warning'?'selected':''}>warning</option>
+        <option ${r.severity==='critical'?'selected':''}>critical</option>
+      </select></td>
+      <td style="text-align:center"><input type="checkbox" ${r.enabled ? 'checked' : ''}
+        onchange="editRule(${r.id},'enabled',this.checked)"></td>
+      <td>${r.builtin ? '' : `<button class="btn danger sm" onclick="delRule(${r.id})">删除</button>`}</td>
+    </tr>`).join('');
+}
+async function editRule(id, field, value) {
+  try {
+    await api('/api/rules/' + id, { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value }) });
+    toast('规则已更新', 'ok');
+    S.rules = await api('/api/rules');
+  } catch (e) { toast('更新失败：' + e.message, 'err'); }
+}
+function renderRuleRow(r) {
+  // 新增：先弹个简单表单
+  const name = prompt('规则名称？', r.name || '新规则');
+  if (!name) return;
+  const metric = prompt('监控指标？可选：\n' + METRICS.join(', '), r.metric);
+  if (!metric) return;
+  const op = prompt('比较符？ > >= < <= == !=', r.op);
+  if (!op) return;
+  const threshold = prompt('阈值？', r.threshold);
+  if (threshold == null) return;
+  const duration = prompt('持续时间（秒）？', r.duration_sec);
+  if (duration == null) return;
+  api('/api/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, metric, op, threshold: +threshold,
+                           duration_sec: +duration, severity: r.severity }) })
+    .then(async () => { S.rules = await api('/api/rules'); renderRules(); toast('已新增', 'ok'); })
+    .catch(e => toast('新增失败：' + e.message, 'err'));
+}
+async function delRule(id) {
+  if (!confirm('确定删除这条规则？')) return;
+  try { await api('/api/rules/' + id, { method: 'DELETE' });
+        S.rules = await api('/api/rules'); renderRules(); toast('已删除', 'ok'); }
+  catch (e) { toast('删除失败：' + e.message, 'err'); }
+}
+
+// ================= 设置页 =================
+function fillSettings() {
+  const s = S.settings; if (!s) return;
+  $('#s-interval').value = s.interval_sec;
+  $('#s-raw').value = s.raw_retention_hours;
+  $('#s-aggdays').value = s.agg_retention_days;
+  $('#s-aggstep').value = s.agg_step_sec;
+  $('#s-offline').value = s.offline_after_sec;
+  $('#s-eval').value = s.eval_interval_sec;
+  $('#s-token').value = s.ingest_token;
+}
+async function saveSettings() {
+  const body = {
+    interval_sec: +$('#s-interval').value,
+    raw_retention_hours: +$('#s-raw').value,
+    agg_retention_days: +$('#s-aggdays').value,
+    agg_step_sec: +$('#s-aggstep').value,
+    offline_after_sec: +$('#s-offline').value,
+    eval_interval_sec: +$('#s-eval').value,
+    ingest_token: $('#s-token').value.trim(),
+  };
+  try {
+    const d = await api('/api/settings', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    toast(d.message || '已保存', 'ok');
+    S.settings = await api('/api/settings'); fillSettings();
+  } catch (e) { toast('保存失败：' + e.message, 'err'); }
+}
+
+
+// ================= 运维：Web 终端 =================
+let term = null, fitAddon = null, termWs = null;
+
+async function initOps() {
+  await loadOpsHosts();
+  await loadTasks();
+  await loadLogs();
+}
+
+async function loadOpsHosts() {
+  const list = await api('/api/remote/creds');
+  const sel = $('#opsHost');
+  const prev = sel.value;
+  sel.innerHTML = list.map(h =>
+    `<option value="${h.host_id}">${h.name}${h.configured ? '' : '（未配置 SSH）'}</option>`).join('');
+  if (prev) sel.value = prev;
+  renderCreds(list);
+}
+
+function renderCreds(list) {
+  $('#credsRows').innerHTML = list.map(h => `
+    <tr class="conn-row" data-host="${h.host_id}">
+      <td>${h.name}${h.online ? '' : ' <span class="hint">(离线)</span>'}</td>
+      <td><input type="text" value="${h.ssh_host || ''}" placeholder="192.168.1.x" data-f="ssh_host"></td>
+      <td><input type="text" value="${h.ssh_user || ''}" placeholder="root" data-f="ssh_user"></td>
+      <td><input type="number" class="small" value="${h.ssh_port || 22}" data-f="ssh_port"></td>
+      <td><select data-f="os_type">
+        <option value="linux" ${h.os_type === 'linux' ? 'selected' : ''}>Linux</option>
+        <option value="windows" ${h.os_type === 'windows' ? 'selected' : ''}>Windows</option>
+      </select></td>
+      <td><input type="text" value="${h.key_path || ''}" placeholder="~/.ssh/id_monitor" data-f="key_path"></td>
+      <td style="text-align:center"><input type="checkbox" ${h.enabled ? 'checked' : ''} data-f="enabled"></td>
+      <td class="row-actions">
+        <button class="btn ghost sm" onclick="saveCreds('${h.host_id}')">保存</button>
+        <button class="btn ghost sm" onclick="testCreds('${h.host_id}')">测试</button>
+      </td>
+    </tr>`).join('');
+}
+
+function readCreds(hostId) {
+  const tr = document.querySelector(`tr.conn-row[data-host="${hostId}"]`);
+  const get = f => tr.querySelector(`[data-f="${f}"]`);
+  return {
+    host_id: hostId,
+    ssh_host: get('ssh_host').value.trim(),
+    ssh_user: get('ssh_user').value.trim(),
+    ssh_port: +get('ssh_port').value,
+    os_type: get('os_type').value,
+    key_path: get('key_path').value.trim(),
+    enabled: get('enabled').checked,
+  };
+}
+
+async function saveCreds(hostId) {
+  try {
+    await api('/api/remote/creds', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(readCreds(hostId)) });
+    toast('连接设置已保存', 'ok');
+    await loadOpsHosts();
+  } catch (e) { toast('保存失败：' + e.message, 'err'); }
+}
+
+async function testCreds(hostId) {
+  toast('正在测试连接…');
+  try {
+    const d = await api('/api/remote/test', { method: 'POST',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({ host_id: hostId }) });
+    if (d.ok) toast('✅ 连接成功：' + d.result, 'ok');
+    else toast('❌ ' + d.error, 'err');
+  } catch (e) { toast('测试失败：' + e.message, 'err'); }
+}
+
+
+
+
+async function openConsole() {
+  const hostId = $('#opsHost').value;
+  if (!hostId) return toast('先选择主机', 'err');
+  const btn = event && event.target;
+  try {
+    const d = await api('/api/remote/console', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host_id: hostId }) });
+    if (d.error) return toast('❌ ' + d.error, 'err');
+    toast('✅ ' + (d.message || '已弹出终端窗口'), 'ok');
+    await loadLogs();
+  } catch (e) { toast('❌ ' + e.message, 'err'); }
+}
+
+// ================= 运维：快捷任务 =================
+async function loadTasks() {
+  const list = await api('/api/remote/tasks?all=1');
+  $('#taskBar').innerHTML = list.map(t =>
+    `<button class="taskbtn ${t.enabled ? '' : 'off'}" onclick="runTask(${t.id})" title="${t.name}">${t.name}</button>`).join('')
+    || '<span class="hint">没有任务</span>';
+  $('#taskRows').innerHTML = list.map(t => `
+    <tr data-task="${t.id}">
+      <td>${t.builtin ? '<span class="hint">内置 </span>' : ''}${t.name}</td>
+      <td><input type="text" value="${(t.cmd_linux || '').replace(/"/g, '&quot;')}" data-tf="cmd_linux"></td>
+      <td><input type="text" value="${(t.cmd_windows || '').replace(/"/g, '&quot;')}" data-tf="cmd_windows"></td>
+      <td style="text-align:center"><input type="checkbox" ${t.enabled ? 'checked' : ''}
+        onchange="toggleTask(${t.id}, this.checked)"></td>
+      <td>${t.builtin ? '' : `<button class="btn danger sm" onclick="delTask(${t.id})">删除</button>`}</td>
+    </tr>`).join('');
+}
+
+async function toggleTask(id, enabled) {
+  try {
+    await api('/api/remote/tasks/' + id, { method: 'PUT',
+      headers: {'Content-Type':'application/json'}, body: JSON.stringify({ enabled }) });
+    await loadTasks();
+    toast(enabled ? '任务已启用' : '任务已停用', 'ok');
+  } catch (e) { toast('操作失败：' + e.message, 'err'); }
+}
+
+async function delTask(id) {
+  if (!confirm('确认删除这个任务？')) return;
+  try { await api('/api/remote/tasks/' + id, { method: 'DELETE' });
+        await loadTasks(); toast('已删除', 'ok'); }
+  catch (e) { toast('删除失败：' + e.message, 'err'); }
+}
+
+async function addTask() {
+  const name = prompt('任务名称？');
+  if (!name) return;
+  const cmd_linux = prompt('Linux 命令？', 'df -h') || '';
+  const cmd_windows = prompt('Windows 命令（可留空）？', '') || '';
+  try {
+    await api('/api/remote/tasks', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ name, cmd_linux, cmd_windows }) });
+    await loadTasks(); toast('已新增', 'ok');
+  } catch (e) { toast('新增失败：' + e.message, 'err'); }
+}
+
+async function runTask(taskId) {
+  const hostId = $('#opsHost').value;
+  if (!hostId) return toast('先选择主机', 'err');
+  const out = $('#taskOut');
+  out.classList.add('show');
+  out.textContent = '执行中…';
+  try {
+    const d = await api('/api/remote/exec', { method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ host_id: hostId, task_id: taskId }) });
+    if (d.ok) {
+      out.textContent = `$ ${d.cmd}\n${d.output}\n\n[返回码 ${d.rc} · 耗时 ${d.duration_ms}ms]`;
+    } else {
+      out.textContent = `❌ ${d.error}`;
+    }
+    await loadLogs();
+  } catch (e) {
+    out.textContent = '❌ ' + e.message;
+  }
+}
+
+async function loadLogs() {
+  const list = await api('/api/remote/logs?limit=50');
+  $('#logRows').innerHTML = list.map(l => `
+    <tr>
+      <td>${new Date(l.ts * 1000).toLocaleString()}</td>
+      <td>${l.host_name}</td>
+      <td>${l.kind}</td>
+      <td style="font-family:monospace;font-size:12px">${(l.cmd || '').slice(0, 90)}</td>
+      <td class="${l.rc ? 'err-text' : 'ok-text'}">${l.rc == null ? '—' : l.rc}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="hint">暂无记录</td></tr>';
+}
+
+
+// ================= 文件管理（SFTP）=================
+let filePath = '/';
+
+function fmtSize(n) {
+  if (n == null) return '—';
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+  if (n < 1024*1024*1024) return (n/1024/1024).toFixed(1) + ' MB';
+  return (n/1024/1024/1024).toFixed(2) + ' GB';
+}
+function fmtTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString();
+}
+
+async function initFiles() {
+  const [list, hosts] = await Promise.all([api('/api/remote/creds'), api('/api/hosts')]);
+  const onlineMap = Object.fromEntries((hosts || []).map(h => [h.id, !!h.online]));
+  const sel = $('#fileHost');
+  const ready = list.filter(h => h.enabled && h.ssh_host);
+  if (!ready.length) {
+    sel.innerHTML = '<option value="">（还没有配置 SSH 的主机）</option>';
+    $('#fileRows').innerHTML = '<tr><td colspan="6" class="hint">先到「运维 → 连接设置」里配好一台主机</td></tr>';
+    return;
+  }
+  // 在线的排前面（否则会默认选中一台离线的机器，一打开就报错）
+  ready.sort((a, b) =>
+    (onlineMap[b.host_id] ? 1 : 0) - (onlineMap[a.host_id] ? 1 : 0)
+    || String(a.name).localeCompare(String(b.name), 'zh'));
+
+  sel.innerHTML = ready.map(h =>
+    `<option value="${h.host_id}">${h.name}${onlineMap[h.host_id] ? '' : '（离线）'}</option>`
+  ).join('');
+
+  // 优先恢复上次看的主机；没有就选第一台在线的；都不在线就选第一台
+  const saved = localStorage.getItem('monitor.fileHost');
+  const pick = (saved && ready.some(h => h.host_id === saved))
+    ? saved
+    : (ready.find(h => onlineMap[h.host_id]) || ready[0]).host_id;
+  sel.value = pick;
+
+  sel.onchange = () => {
+    filePath = '/';
+    localStorage.setItem('monitor.fileHost', sel.value);
+    fileRefresh();
+  };
+  setupDrop();
+  fileRefresh();
+}
+
+function renderCrumb(p) {
+  const parts = p.split('/').filter(Boolean);
+  let acc = '';
+  let html = `<a onclick="fileGoto('/')">/</a>`;
+  for (const seg of parts) {
+    acc += '/' + seg;
+    html += ` <a onclick="fileGoto('${acc}')">${seg}</a> /`;
+  }
+  $('#fileCrumb').innerHTML = html;
+}
+
+async function fileRefresh() {
+  const host = $('#fileHost').value;
+  if (!host) return;
+  const rows = $('#fileRows');
+  rows.innerHTML = '<tr><td colspan="6" class="hint">加载中…</td></tr>';
+  try {
+    const d = await api(`/api/files?host_id=${encodeURIComponent(host)}&path=${encodeURIComponent(filePath)}`);
+    if (d.error) { rows.innerHTML = `<tr><td colspan="6" class="err-text">${d.error}</td></tr>`; return; }
+    filePath = d.path;
+    renderCrumb(d.path);
+    const dirs = d.entries.filter(e => e.is_dir).length;
+    const files = d.entries.length - dirs;
+    $('#fileMeta').textContent = `${dirs} 个目录 · ${files} 个文件`;
+    rows.innerHTML = d.entries.map(e => `
+      <tr>
+        <td><input type="checkbox" class="fchk" value="${e.path.replace(/"/g,'&quot;')}"></td>
+        <td><div class="nm" onclick="${e.is_dir ? `fileGoto('${e.path.replace(/'/g,"\\'")}')` : ''}">
+          ${e.is_dir ? '📁' : '📄'} ${e.name}${e.is_link ? ' ↗' : ''}
+        </div></td>
+        <td class="sz">${e.is_dir ? '—' : fmtSize(e.size)}</td>
+        <td class="sz">${fmtTime(e.mtime)}</td>
+        <td class="sz">${e.mode || '—'}</td>
+        <td class="act">
+          ${e.is_dir ? '' : `<a onclick="fileDownload('${e.path.replace(/'/g,"\\'")}')">下载</a>`}
+          <a class="del" onclick="fileDeleteOne('${e.path.replace(/'/g,"\\'")}')">删除</a>
+        </td>
+      </tr>`).join('') || '<tr><td colspan="6" class="hint">空目录</td></tr>';
+  } catch (e) {
+    rows.innerHTML = `<tr><td colspan="6" class="err-text">${e.message}</td></tr>`;
+  }
+}
+
+function fileGoto(p) { filePath = p; fileRefresh(); }
+function fileUp() {
+  const parts = filePath.split('/').filter(Boolean);
+  parts.pop();
+  filePath = '/' + parts.join('/');
+  fileRefresh();
+}
+function fileDownload(p) {
+  const host = $('#fileHost').value;
+  window.location = `/api/files/download?host_id=${encodeURIComponent(host)}&path=${encodeURIComponent(p)}`;
+}
+function fileToggleAll(on) {
+  document.querySelectorAll('.fchk').forEach(c => c.checked = on);
+}
+async function fileDeleteOne(p) {
+  if (!confirm('确定删除 ' + p + ' ？')) return;
+  await fileDeletePaths([p]);
+}
+async function fileDelete() {
+  const paths = [...document.querySelectorAll('.fchk:checked')].map(c => c.value);
+  if (!paths.length) return toast('先勾选要删除的文件', 'err');
+  if (!confirm(`确定删除选中的 ${paths.length} 项？\n\n` + paths.join('\n'))) return;
+  await fileDeletePaths(paths);
+}
+async function fileDeletePaths(paths) {
+  const host = $('#fileHost').value;
+  try {
+    const d = await api('/api/files/delete', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ host_id: host, paths }) });
+    if (d.error) return toast('删除失败：' + d.error, 'err');
+    toast(`已删除 ${d.deleted.length} 项`, 'ok');
+    fileRefresh();
+  } catch (e) { toast('删除失败：' + e.message, 'err'); }
+}
+async function fileMkdir() {
+  const name = prompt('新文件夹名称？');
+  if (!name) return;
+  const host = $('#fileHost').value;
+  const p = (filePath === '/' ? '' : filePath) + '/' + name;
+  try {
+    const d = await api('/api/files/mkdir', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ host_id: host, path: p }) });
+    if (d.error) return toast('创建失败：' + d.error, 'err');
+    toast('已创建 ' + d.path, 'ok'); fileRefresh();
+  } catch (e) { toast('创建失败：' + e.message, 'err'); }
+}
+
+function setupDrop() {
+  const z = $('#dropZone');
+  ['dragenter','dragover'].forEach(ev => z.addEventListener(ev, e => {
+    e.preventDefault(); z.classList.add('over');
+  }));
+  ['dragleave','drop'].forEach(ev => z.addEventListener(ev, e => {
+    e.preventDefault(); z.classList.remove('over');
+  }));
+  z.addEventListener('drop', e => {
+    if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+  });
+  $('#fileInput').onchange = e => {
+    if (e.target.files.length) uploadFiles(e.target.files);
+    e.target.value = '';
+  };
+}
+
+async function uploadFiles(files) {
+  const host = $('#fileHost').value;
+  if (!host) return toast('先选择主机', 'err');
+  const fd = new FormData();
+  fd.append('host_id', host);
+  fd.append('path', filePath);
+  for (const f of files) fd.append('file', f);
+
+  const bar = $('#upProg');
+  bar.style.display = 'block';
+  bar.firstElementChild.style.width = '30%';
+  try {
+    const r = await fetch('/api/files/upload', { method:'POST', body: fd });
+    const d = await r.json();
+    bar.firstElementChild.style.width = '100%';
+    if (d.error) toast('上传失败：' + d.error, 'err');
+    else toast(`已上传 ${d.uploaded.length} 个文件`, 'ok');
+    fileRefresh();
+  } catch (e) {
+    toast('上传失败：' + e.message, 'err');
+  } finally {
+    setTimeout(() => { bar.style.display = 'none'; bar.firstElementChild.style.width = '0'; }, 700);
+  }
+}
+
+
+
+// ================= 主机管理 =================
+let hostMgrCache = [], hostEditingId = null;
+
+async function hostMgrLoad() {
+  const tb = $('#hostMgrRows');
+  if (tb) tb.innerHTML = '<tr><td colspan="9" class="hint">加载中…</td></tr>';
+  try {
+    const [hosts, creds, sessions] = await Promise.all([
+      api('/api/hosts'), api('/api/remote/creds'), api('/api/remote/sessions'),
+    ]);
+    const cmap = Object.fromEntries(creds.map(c => [c.host_id, c]));
+    const scount = {};
+    sessions.forEach(x => { scount[x.host_id] = (scount[x.host_id] || 0) + 1; });
+    hostMgrCache = hosts.map(h => ({ ...h, cred: cmap[h.id] || null, sessions: scount[h.id] || 0 }));
+    renderHostMgr();
+  } catch (e) {
+    if (tb) tb.innerHTML = `<tr><td colspan="9" class="err-text">${e.message}</td></tr>`;
+  }
+}
+
+function renderHostMgr() {
+  const tb = $('#hostMgrRows');
+  if (!tb) return;
+  if (!hostMgrCache.length) { tb.innerHTML = '<tr><td colspan="9" class="hint">还没有主机</td></tr>'; return; }
+  tb.innerHTML = hostMgrCache.map(h => {
+    const c = h.cred || {};
+    const sess = h.sessions || 0;
+    const hasSess = sess > 0;
+    return `<tr>
+      <td>${h.name}</td>
+      <td>${c.ssh_host || '<span class="hint">未配置</span>'}</td>
+      <td>${c.ssh_user || '—'}</td>
+      <td class="sz">${c.ssh_port || '—'}</td>
+      <td>${c.os_type === 'windows' ? 'Windows' : 'Linux'}</td>
+      <td><span class="badge-src ${h.source}">${h.source === 'manual' ? '手动' : '采集端'}</span></td>
+      <td>${h.monitor ? '<span class="ok-text">✅</span>' : '<span class="hint">不监控</span>'}</td>
+      <td>${h.online ? '<span class="ok-text">在线</span>' : '<span class="hint">离线</span>'}</td>
+      <td class="act">
+        <a onclick="hostTest('${h.id}')">测试</a>
+        <a onclick="hostFormOpen('${h.id}')">编辑</a>
+        <a onclick="hostDisconnect('${h.id}')" class="${hasSess ? '' : 'hint'}">断开${hasSess ? ' ' + sess : ''}</a>
+        <a class="del" onclick="hostDelete('${h.id}')">删除</a>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function hostFormOpen(id) {
+  hostEditingId = id || null;
+  $('#hostFormTitle').textContent = id ? '编辑主机' : '新增主机';
+  $('#hf-id').disabled = !!id;
+  if (id) {
+    const h = hostMgrCache.find(x => x.id === id) || {};
+    const c = h.cred || {};
+    $('#hf-id').value = h.id || '';
+    $('#hf-name').value = h.name || '';
+    $('#hf-host').value = c.ssh_host || '';
+    $('#hf-user').value = c.ssh_user || '';
+    $('#hf-port').value = c.ssh_port || 22;
+    $('#hf-key').value = c.key_path || '~/.ssh/id_monitor';
+    $('#hf-os').value = c.os_type || 'linux';
+    $('#hf-monitor').checked = !!h.monitor;
+  } else {
+    ['hf-id', 'hf-name', 'hf-host', 'hf-user'].forEach(k => $('#' + k).value = '');
+    $('#hf-port').value = 22;
+    $('#hf-key').value = '~/.ssh/id_monitor';
+    $('#hf-os').value = 'linux';
+    $('#hf-monitor').checked = false;
+  }
+  $('#hostForm').classList.remove('hidden');
+}
+function hostFormClose() { $('#hostForm').classList.add('hidden'); }
+
+async function hostFormSave() {
+  const body = {
+    name: $('#hf-name').value.trim(),
+    ssh_host: $('#hf-host').value.trim(),
+    ssh_user: $('#hf-user').value.trim(),
+    ssh_port: +$('#hf-port').value,
+    key_path: $('#hf-key').value.trim(),
+    os_type: $('#hf-os').value,
+    enabled: true,
+    monitor: $('#hf-monitor').checked,
+  };
+  if (!body.name) return toast('显示名称必填', 'err');
+  if (!body.ssh_host) return toast('SSH 地址必填', 'err');
+  try {
+    if (hostEditingId) {
+      await api('/api/hosts/' + hostEditingId, { method: 'PUT',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    } else {
+      body.id = $('#hf-id').value.trim();
+      if (!body.id) return toast('主机 ID 必填', 'err');
+      await api('/api/hosts', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    }
+    toast('已保存', 'ok');
+    hostFormClose();
+    hostMgrLoad();
+  } catch (e) { toast('保存失败：' + e.message, 'err'); }
+}
+
+async function hostTest(id) {
+  toast('正在测试连接…');
+  try {
+    const d = await api('/api/remote/test', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host_id: id }) });
+    if (d.ok) toast('✅ 连接成功：' + String(d.result).replace(/\s+/g, ' '), 'ok');
+    else toast('❌ ' + d.error, 'err');
+  } catch (e) { toast('❌ ' + e.message, 'err'); }
+}
+
+async function hostDisconnect(id) {
+  try {
+    const d = await api('/api/remote/disconnect', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host_id: id }) });
+    toast(d.count ? `已断开 ${d.count} 个终端会话` : '当前没有打开的终端会话', d.count ? 'ok' : '');
+    hostMgrLoad();
+  } catch (e) { toast('断开失败：' + e.message, 'err'); }
+}
+
+async function hostDelete(id) {
+  const h = hostMgrCache.find(x => x.id === id) || {};
+  if (!confirm(`确定删除主机「${h.name || id}」？\n\n会移除：主机、指标数据、SSH 连接配置\n会保留：历史告警记录（方便回查）`)) return;
+  try {
+    await api('/api/hosts/' + id + '/delete', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purge_alerts: false }) });
+    toast('已删除', 'ok');
+    hostMgrLoad();
+  } catch (e) { toast('删除失败：' + e.message, 'err'); }
+}
+
+
+// ================= 命令库 =================
+let CMD_DATA = null, cmdGroup = 'all';
+
+async function cmdLibLoad() {
+  if (!CMD_DATA) {
+    try {
+      CMD_DATA = await api('/api/commands');
+      renderChips();
+    } catch (e) {
+      $('#cmdList').innerHTML = `<div id="cmdEmpty">加载失败：${e.message}</div>`;
+      return;
+    }
+  }
+  renderCmdLib();
+}
+
+function renderChips() {
+  const el = $('#cmdChips');
+  if (!el || !CMD_DATA) return;
+  const chips = [{ id: 'all', name: '全部', icon: '✨' }, ...(CMD_DATA.groups || [])];
+  el.innerHTML = chips.map(g =>
+    `<button class="cmdchip ${cmdGroup === g.id ? 'active' : ''}" onclick="setCmdGroup('${g.id}')">`
+    + `${g.icon} ${g.name}</button>`).join('');
+}
+
+function setCmdGroup(id) {
+  cmdGroup = id;
+  renderChips();
+  renderCmdLib();
+}
+
+function copyCmdById(id, btn) {
+  const c = (CMD_DATA && CMD_DATA.commands || []).find(x => x.id === id);
+  if (!c) return;
+  const done = () => {
+    const old = btn.textContent;
+    btn.textContent = '✅ 已复制';
+    setTimeout(() => { btn.textContent = old; }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(c.cmd).then(done).catch(() => toast('复制失败，请手动选中', 'err'));
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = c.cmd; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) { toast('复制失败', 'err'); }
+    document.body.removeChild(ta);
+  }
+}
+
+function renderCmdLib() {
+  if (!CMD_DATA) return;
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g,
+    m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
+  const q = ($('#cmdBuf').value || '').trim().toLowerCase();
+  let list = CMD_DATA.commands || [];
+  if (cmdGroup !== 'all') list = list.filter(c => c.group === cmdGroup);
+  if (q) {
+    list = list.filter(c =>
+      (c.name + ' ' + c.cmd + ' ' + c.desc + ' ' + c.usage + ' ' + c.cat).toLowerCase().includes(q));
+  }
+  const box = $('#cmdList');
+  if (!list.length) {
+    box.innerHTML = `<div id="cmdEmpty">没有匹配「${esc(q)}」的命令</div>`;
+    return;
+  }
+  // 按分类分组显示
+  const order = [], byCat = {};
+  list.forEach(c => {
+    if (!byCat[c.cat]) { byCat[c.cat] = []; order.push(c.cat); }
+    byCat[c.cat].push(c);
+  });
+  box.innerHTML = order.map(cat => {
+    const items = byCat[cat].map(c => `
+      <div class="cmdcard">
+        <div class="cmdhead">
+          <span class="cmdname">${esc(c.name)}</span>
+          ${c.warn ? '<span class="cmdwarn">⚠ 危险</span>' : ''}
+          <button class="btn ghost sm" onclick="copyCmdById('${c.id}', this)">复制</button>
+        </div>
+        <pre class="cmdcode">${esc(c.cmd)}</pre>
+        <div class="cmddesc">${esc(c.desc)}</div>
+        ${c.usage ? `<div class="cmdrow"><b>用法：</b>${esc(c.usage)}</div>` : ''}
+        ${c.example ? `<div class="cmdrow"><b>示例：</b><code>${esc(c.example)}</code></div>` : ''}
+      </div>`).join('');
+    return `<div class="cmdgroup-title">${esc(cat)} · ${byCat[cat].length} 条</div>${items}`;
+  }).join('');
+}
+
+// ================= 登录 / 关闭 =================
+async function doLogout() {
+  try { await fetch('/api/logout', { method: 'POST' }); } catch (e) {}
+  location.href = '/login';
+}
+
+async function doShutdown() {
+  if (!confirm('确定要关闭后台服务吗？\n\n这会停止：\n· 监控服务端\n· 本机采集端\n· 模拟主机容器\n\n下次点桌面图标可以重新启动。')) return;
+  try {
+    await fetch('/api/shutdown', { method: 'POST' });
+  } catch (e) {}
+  if (S.es) { try { S.es.close(); } catch (e) {} }
+  $('#shutdownMask').classList.add('show');
+}
+
+async function changePassword() {
+  const old = $('#pw-old').value, nw = $('#pw-new').value, nw2 = $('#pw-new2').value;
+  if (!old || !nw) return toast('请填写完整', 'err');
+  if (nw !== nw2) return toast('两次输入的新密码不一致', 'err');
+  if (nw.length < 6) return toast('新密码至少 6 位', 'err');
+  try {
+    const d = await api('/api/password', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old, new: nw }) });
+    if (d.error) return toast(d.error, 'err');
+    toast('密码已修改', 'ok');
+    $('#pw-old').value = $('#pw-new').value = $('#pw-new2').value = '';
+  } catch (e) { toast('修改失败：' + e.message, 'err'); }
+}
+
+// ================= 启动 =================
+applySidebar(localStorage.getItem('monitor.sidebar.collapsed') === '1');
+connect();
+setInterval(async () => {
+  try {
+    const d = await api('/api/overview');
+    // 兜底：SSE 万一漏了事件，用轮询对齐主机在线状态
+    const was = new Set(Object.keys(S.hosts));
+    S.hosts = Object.fromEntries(d.hosts.map(h => [h.id, h]));
+    S.alerts = d.alerts;
+    updateStat(d.stats);
+    renderHosts(); renderAlerts();
+  } catch (e) {}
+}, 15000);
+</script>
+</body>
+</html>

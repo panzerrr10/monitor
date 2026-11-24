@@ -1,0 +1,22 @@
+# ===== 运行时数据（不入库）=====
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+data/
+logs/
+*.pid
+*.log
+
+# ===== 虚拟机镜像（qcow2 约 1.1 GB，体积过大）=====
+vm/
+
+# ===== 本机配置：含真实会话密钥 / 密码哈希 / 初始密码，用 settings.example.json 代替 =====
+config/settings.json
+config/初始密码.txt
+
+# ===== 编辑器 / 工具 =====
+.workbuddy/
+.idea/
+.vscode/
+.DS_Store
